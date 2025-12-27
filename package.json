@@ -1,20 +1,12 @@
 {
-  "name": "tiktok-auction",
+  "name": "tiklink-auction",
   "version": "1.0.0",
-  "description": "TikTok Coins Auction Overlay & Control",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "cors": "^2.8.5",
-    "express": "^4.22.1",
-    "socket.io": "^4.8.3",
-    "tiktok-live-connector": "^2.1.1-beta1",
-    "ws": "^8.18.3"
-  },
-  "author": "YourName",
-  "license": "MIT",
-  "keywords": [],
-  "type": "commonjs"
+    "ws": "^8.13.0",
+    "tiktok-live-connector": "^1.0.1"
+  }
 }
