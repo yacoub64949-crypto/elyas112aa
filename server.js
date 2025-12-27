@@ -1,7 +1,7 @@
 /**
  * TikLink Auction Pro - Node.js Backend Bridge
  * Auto connect to TikTok Live @elyas1121
- * Anti duplicate gifts enabled
+ * Values preserved exactly as sent by TikTok
  * npm install tiktok-live-connector ws
  */
 
@@ -14,9 +14,6 @@ const RETRY_COUNT = 3;
 const RETRY_DELAY_MS = 3000;
 
 const wss = new WebSocketServer({ port: PORT });
-
-// 🧠 تخزين الهدايا التي تم احتسابها (منع التكرار)
-const processedGifts = new Set();
 
 console.log('--------------------------------------------------');
 console.log('🚀 TikLink Auction Pro: Bridge Server Starting...');
@@ -44,20 +41,9 @@ async function connectTikTok(ws, retries = RETRY_COUNT) {
                 roomId: state.roomId
             }));
 
-            // 🎁 Gifts (ANTI DUPLICATE)
+            // 🎁 Gifts (كل شيء بقيمته الأصلية، بدون فلترة)
             tiktokConnection.on('gift', (gift) => {
-                if (!gift || gift.diamondCount <= 0) return;
-
-                // معرف فريد لكل هدية
-                const giftKey = `${gift.userId}-${gift.uniqueId}-${gift.repeatCount}`;
-
-                if (processedGifts.has(giftKey)) return;
-                processedGifts.add(giftKey);
-
-                // تنظيف الذاكرة (اختياري)
-                if (processedGifts.size > 5000) {
-                    processedGifts.clear();
-                }
+                if (!gift) return;
 
                 const profilePic =
                     typeof gift.profilePictureUrl === 'string'
@@ -71,19 +57,17 @@ async function connectTikTok(ws, retries = RETRY_COUNT) {
                     uniqueId: gift.uniqueId,
                     nickname: gift.nickname,
                     profilePictureUrl: profilePic,
-                    diamondCount: gift.diamondCount,
                     giftName: gift.giftName,
-                    repeatCount: gift.repeatCount
+                    repeatCount: gift.repeatCount,
+                    diamondCount: gift.diamondCount // 🔥 قيمتها الأصلية كما أرسلها تيك توك
                 }));
             });
 
-            // ⚠️ Disconnect
             tiktokConnection.on('disconnected', () => {
                 console.log('⚠️ TikTok disconnected');
                 ws.send(JSON.stringify({ type: 'status', connected: false }));
             });
 
-            // ❌ Error
             tiktokConnection.on('error', (err) => {
                 console.error('❌ TikTok Error:', err.message);
                 ws.send(JSON.stringify({
