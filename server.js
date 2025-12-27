@@ -1,110 +1,132 @@
 /**
- * TikLink Auction Pro - Node.js Backend Bridge
- * Auto connect to TikTok Live @elyas1121
- * Values preserved exactly as sent by TikTok
- * npm install tiktok-live-connector ws
+ * TikLink Auction Pro
+ * FINAL – حساب كل الهدايا بقيمتها الحقيقية بدون تكرار
  */
 
 const { WebcastPushConnection } = require('tiktok-live-connector');
 const { WebSocketServer } = require('ws');
 
-const PORT = 8081;
+const PORT = 8090;
 const TIKTOK_USERNAME = 'elyas1121';
-const RETRY_COUNT = 3;
-const RETRY_DELAY_MS = 3000;
 
+// ⏱️ قفل زمني لمنع التكرار
+const TIME_LOCK_MS = 400;
+
+// WebSocket Server
 const wss = new WebSocketServer({ port: PORT });
 
-console.log('--------------------------------------------------');
-console.log('🚀 TikLink Auction Pro: Bridge Server Starting...');
-console.log(`📡 WebSocket Server: ws://localhost:${PORT}`);
-console.log(`🎯 TikTok Auto-Connect: @${TIKTOK_USERNAME}`);
-console.log('--------------------------------------------------');
+// 🧠 آخر هدية لكل مستخدم
+const lastGiftTime = new Map();
 
-async function connectTikTok(ws, retries = RETRY_COUNT) {
-    for (let i = 0; i < retries; i++) {
-        try {
-            const tiktokConnection = new WebcastPushConnection(TIKTOK_USERNAME, {
-                processInitialData: false,
-                enableExtendedGiftInfo: true,
-                requestPollingIntervalMs: 1000
-            });
+console.log('-------------------------------------------');
+console.log('🚀 TikLink Auction Pro - FINAL');
+console.log(`📡 WS: ws://localhost:${PORT}`);
+console.log(`🎯 TikTok: @${TIKTOK_USERNAME}`);
+console.log('-------------------------------------------');
 
-            const state = await tiktokConnection.connect();
+async function connectTikTok(ws) {
+    const tiktok = new WebcastPushConnection(TIKTOK_USERNAME, {
+        processInitialData: false,
+        enableExtendedGiftInfo: true
+    });
 
-            console.log(`✔️ Connected to @${TIKTOK_USERNAME} (Room ID: ${state.roomId})`);
+    try {
+        await tiktok.connect();
+        console.log('✔️ LIVE CONNECTED');
 
-            ws.send(JSON.stringify({
-                type: 'status',
-                connected: true,
-                username: TIKTOK_USERNAME,
-                roomId: state.roomId
-            }));
-
-            // 🎁 Gifts (كل شيء بقيمته الأصلية، بدون فلترة)
-            tiktokConnection.on('gift', (gift) => {
-                if (!gift) return;
-
-                const profilePic =
-                    typeof gift.profilePictureUrl === 'string'
-                        ? gift.profilePictureUrl
-                        : gift.profilePictureUrl?.urls?.[0] ||
-                          'https://www.tiktok.com/favicon.ico';
-
-                ws.send(JSON.stringify({
-                    type: 'gift',
-                    userId: gift.userId,
-                    uniqueId: gift.uniqueId,
-                    nickname: gift.nickname,
-                    profilePictureUrl: profilePic,
-                    giftName: gift.giftName,
-                    repeatCount: gift.repeatCount,
-                    diamondCount: gift.diamondCount // 🔥 قيمتها الأصلية كما أرسلها تيك توك
-                }));
-            });
-
-            tiktokConnection.on('disconnected', () => {
-                console.log('⚠️ TikTok disconnected');
-                ws.send(JSON.stringify({ type: 'status', connected: false }));
-            });
-
-            tiktokConnection.on('error', (err) => {
-                console.error('❌ TikTok Error:', err.message);
-                ws.send(JSON.stringify({
-                    type: 'error',
-                    message: 'حدث خطأ في الاتصال مع TikTok'
-                }));
-            });
-
-            return tiktokConnection;
-
-        } catch (err) {
-            console.error(`❌ Attempt ${i + 1} failed: ${err.message}`);
-            if (i < retries - 1) {
-                await new Promise(res => setTimeout(res, RETRY_DELAY_MS));
-            } else {
-                ws.send(JSON.stringify({
-                    type: 'error',
-                    message: 'فشل الاتصال بالبث'
-                }));
-            }
-        }
+        ws.send(JSON.stringify({
+            type: 'status',
+            connected: true
+        }));
+    } catch (err) {
+        console.log('❌ NOT LIVE');
+        ws.send(JSON.stringify({
+            type: 'status',
+            connected: false
+        }));
+        return null;
     }
-    return null;
+
+    // 🎁 GIFTS — الحساب الصحيح النهائي
+    tiktok.on('gift', (gift) => {
+        if (!gift || !gift.diamondCount) return;
+
+        // ⛔ تجاهل تحديثات الستريك (نحسب عند النهاية فقط)
+        if (gift.repeatEnd === false) return;
+
+        const now = Date.now();
+        const lastTime = lastGiftTime.get(gift.userId) || 0;
+
+        // ⛔ منع التكرار
+        if (now - lastTime < TIME_LOCK_MS) return;
+
+        lastGiftTime.set(gift.userId, now);
+
+        // تنظيف الذاكرة
+        if (lastGiftTime.size > 1000) lastGiftTime.clear();
+
+        // ✅ الحساب الحقيقي
+        let coins = gift.diamondCount;
+
+        // لو كانت ستريك نحسب القيمة الكاملة مرة وحدة
+        if (gift.repeatCount && gift.repeatCount > 1) {
+            coins = gift.diamondCount * gift.repeatCount;
+        }
+
+        console.log(
+            `🎁 ${gift.nickname} | ${gift.giftName} → ${coins} 💎`
+        );
+
+        ws.send(JSON.stringify({
+            type: 'gift',
+            userId: gift.userId,
+            uniqueId: gift.uniqueId,
+            nickname: gift.nickname,
+            giftName: gift.giftName,
+            coins
+        }));
+    });
+
+    tiktok.on('disconnected', () => {
+        console.log('⚠️ TIKTOK DISCONNECTED');
+        lastGiftTime.clear();
+        ws.send(JSON.stringify({
+            type: 'status',
+            connected: false
+        }));
+    });
+
+    return tiktok;
 }
 
-// 🌐 WebSocket
+// 🌐 WebSocket Connections
 wss.on('connection', async (ws) => {
-    console.log('✅ Dashboard connected');
-    let tiktokConnection = null;
+    console.log('✅ Dashboard Connected');
+    let tiktok = null;
 
-    // 🔥 اتصال تلقائي
-    tiktokConnection = await connectTikTok(ws);
+    ws.on('message', async (msg) => {
+        let data;
+        try {
+            data = JSON.parse(msg);
+        } catch {
+            return;
+        }
+
+        if (data.type === 'connect') {
+            if (!tiktok) {
+                tiktok = await connectTikTok(ws);
+            }
+        }
+
+        if (data.type === 'disconnect') {
+            if (tiktok) {
+                tiktok.disconnect();
+                tiktok = null;
+            }
+        }
+    });
 
     ws.on('close', () => {
-        console.log('❌ Dashboard disconnected');
-        if (tiktokConnection) {
-            try { tiktokConnection.disconnect(); } catch (e) {}
-        }
+        if (tiktok) tiktok.disconnect();
     });
 });
